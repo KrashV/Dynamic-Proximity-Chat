@@ -77,7 +77,8 @@ local function checkStatus(data)
     local playerSecret = data.secret or nil
 
     if not playerId or not uuid or not playerSecret then
-        return
+        world.sendEntityMessage(data.player, "dpcServerMessage", "Missing playerId, uuid, or authenticator.")
+        return false
     end
     playerSecrets = root.getConfiguration("DPC::playerSecrets") or {}
 
@@ -91,7 +92,8 @@ local function checkStatus(data)
     end
 
     if serverSavedSecret ~= playerSecret then
-        return
+        world.sendEntityMessage(data.player, "dpcServerMessage", "Bad authentication, command aborted.")
+        return false
     end
 
     -- this function is incomplete, need to fix it later
@@ -2724,9 +2726,9 @@ end
 local function checkVersion(data)
     local userVersion = data.version
     -- hard code this comparison, i don't care
-    if userVersion < 226 then
+    if userVersion < 227 then
         world.sendEntityMessage(data.player, "dpcServerMessage",
-            "^CornFlowerBlue;Dynamic Prox Chat^reset;: Your mod is out of date! Please go install version 2.2.6 to ensure functionality with the server. Use /ignoreversion to suppress this.")
+            "^CornFlowerBlue;Dynamic Prox Chat^reset;: Your mod is out of date! Please go install version 2.2.7 to ensure functionality with the server. Use /ignoreversion to suppress this.")
     end
     return
 end
