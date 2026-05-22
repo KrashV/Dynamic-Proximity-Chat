@@ -1431,6 +1431,11 @@ end
 local function processVisuals(authorEntityId, authorPos, receiverEntityId, receiverUUID, recPos, maxRad,
     messageDistance, formattedTable, recWorld, langAlphabets, slashCount, tickCount, asterCount, message, edit)
     local activeFreq = (playerCommChannels and playerCommChannels[receiverUUID]) or {}
+    if not activeFreq.freq then
+        activeFreq = {
+            freq = "0"
+        }
+    end
     local adminActive = activeAdmins[receiverUUID] == true or false
     local recLangs = (playerLangs and playerLangs[receiverUUID]) or {}
     local recTraits = (playerTraits and playerTraits[receiverUUID]) or {}
@@ -2267,6 +2272,10 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
             end
         end
 
+        if activeFreq.freq then
+            activeFreq.freq = tostring(activeFreq.freq)
+        end
+
         for _, chunk in ipairs(textTable) do
             chunk["text"] = string.gsub(chunk["text"], "%^rollColor;", "^" .. rollColor .. ";")
             local useRad = tonumber(chunk["radius"])
@@ -2299,8 +2308,12 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
                 end
             end
 
+            if chunk.commCode then
+                chunk.commCode = tostring(chunk.commCode)
+            end
+
             if radioMode and radioState and
-                (activeFreq["freq"] and activeFreq["freq"] == chunk["commCode"] or chunk["commCode"] == 0) then
+                (activeFreq["freq"] and activeFreq["freq"] == chunk["commCode"] or chunk["commCode"] == "0") then
                 inSight = true
             else
                 radioMode = false
@@ -2390,8 +2403,8 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
             local rawStr = v["text"]
             -- FezzedOne: Strip out radio brackets. We'll re-add them later.
             v["text"] = rawStr:gsub("^{{", ""):gsub("^{", ""):gsub("}}$", ""):gsub("}$", "")
-            if v["isRadio"] and radioState and
-                (activeFreq["freq"] and activeFreq["freq"] == v["commCode"] or v["commCode"] == 0) then
+            -- ensure that comm codes and frequencies are strings due to how ints convert to boolean (yuck)
+            if v.isRadio and radioState and (activeFreq.freq == v.commCode or v.commCode == "0") then
                 v["valid"] = true
             else
                 v["isRadio"] = false
@@ -2751,8 +2764,8 @@ local function processMessage(data, edit)
         for _, clientId in ipairs(clientList) do
             local playerEntity = clientId * -65536
             table.insert(playerList, playerEntity)
-            playerWorlds[playerEntity] = universe.clientWorld(clientId) or false
-            playerUniques[playerEntity] = universe.uuidForClient(clientId) or false
+            playerWorlds[playerEntity] = tostring(universe.clientWorld(clientId)) or false
+            playerUniques[playerEntity] = tostring(universe.uuidForClient(clientId)) or false
         end
     else
         playerList = world.players()
@@ -2798,6 +2811,7 @@ local function processMessage(data, edit)
 
     -- process Visuals
     for _, recPlayer in ipairs(playerList) do
+        data.sharesWorld = false
         -- find distances here, process the msg for the player if it's estimated as valid
         local recPos, msgDistance, recUUID = nil, nil, nil
 
@@ -2806,10 +2820,9 @@ local function processMessage(data, edit)
             recUUID = playerUniques[recPlayer]
             maxRange = -1
         end
-
         data.sharesWorld = data.sharesWorld or (playerWorlds[recPlayer] == playerWorlds[data.playerId])
         if data.sharesWorld then
-            recPos = world.entityPosition(world.entityExists(recPlayer) and recPlayer)
+            recPos = world.entityExists(recPlayer) and world.entityPosition(recPlayer)
             msgDistance = world.magnitude(recPos, authorPos) or 0
             recUUID = world.entityUniqueId(recPlayer)
             if maxSoundRad > 0 and not isGlobal then -- only run this if there is a sound radius, checks to modify hearing for max radius

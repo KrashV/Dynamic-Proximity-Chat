@@ -535,9 +535,9 @@ function dynamicprox:registerMessageHandlers(shared) -- look at this function in
             local newFreq, freqAlias = args[1] or nil, args[2] or nil
             if not tonumber(newFreq) then
                 local activeFreq = player.getProperty("DPC::activeFreq") or nil
-                if activeFreq then
+                if activeFreq and activeFreq["freq"] then
                     local freqAlias = (activeFreq["alias"] and "(" .. activeFreq["alias"] .. ")") or "(no alias)"
-                    return "Active frequency is: " .. activeFreq["freq"] .. " " .. freqAlias .. "."
+                    return "Active frequency is: " .. activeFreq["freq"] or 0 .. " " .. freqAlias .. "."
                 else
                     return "No frequency has been set, use /freq to make one."
                 end
