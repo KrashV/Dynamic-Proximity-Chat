@@ -2868,9 +2868,18 @@ local function processMessage(data, edit)
             maxRange = -1
         end
         data.sharesWorld = data.sharesWorld or (playerWorlds[recPlayer] == playerWorlds[data.playerId])
+        recPos = world.entityExists(recPlayer) and world.entityPosition(recPlayer)
+
+        if not recPos then
+            data.sharesWorld = flase
+        end
+
         if data.sharesWorld then
-            recPos = world.entityExists(recPlayer) and world.entityPosition(recPlayer)
-            msgDistance = world.magnitude(recPos, authorPos) or 0
+            if recPos and authorPos then
+                msgDistance = world.magnitude(recPos, authorPos) or 0
+            else
+                msgDistance = math.huge
+            end
             recUUID = world.entityUniqueId(recPlayer)
             if maxSoundRad > 0 and not isGlobal then -- only run this if there is a sound radius, checks to modify hearing for max radius
                 local recTraits = (playerTraits and playerTraits[recUUID]) or {}
