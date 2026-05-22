@@ -1842,6 +1842,53 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
 
             return retWord
         end,
+        ["buzz"] = function(word, byteLC, langCode)
+            local soundLib = {"bzz", "zzt", "bzt", "ztz", "tzz", "zzz", "ksht", "hsh"}
+            randSource:init(math.tointeger(byteLC) + wordBytes(word))
+            local encWord = soundLib[randSource:randInt(1, #soundLib)]
+            randSource:init(math.tointeger(byteLC) + wordBytes(word))
+            local dotAmt = randSource:randInt(0, 2)
+            local trailingDots = ""
+
+            local hasUpper = false
+            local allUpper = true
+            local noLowVowels = false
+
+            for char in word:gmatch(".") do
+                if char ~= char:lower() then
+                    hasUpper = true
+                else
+                    allUpper = false
+                end
+
+                if char == "o" or char == "u" or char == "a" then
+                    noLowVowels = false
+                end
+            end
+
+            if (#word < 3 and allUpper) or (#word < 4 and noLowVowels) then
+                encWord = " . . ."
+                dotAmt = dotAmt - 1
+            end
+
+            while dotAmt > 0 do
+                trailingDots = trailingDots .. " . . ."
+                dotAmt = dotAmt - 1
+            end
+
+            local retWord = encWord .. trailingDots
+            -- if #word == 1 then
+            --     allUpper = false
+            -- end
+
+            if allUpper then
+                retWord = retWord:upper()
+            elseif hasUpper then
+                retWord = retWord:sub(1, 1):upper() .. retWord:sub(2)
+            end
+
+            return retWord
+        end,
         ["mi"] = function(word, byteLC, langCode)
             local soundLib = {"mi"}
             local exceptedWords = {}
@@ -2739,9 +2786,9 @@ end
 local function checkVersion(data)
     local userVersion = data.version
     -- hard code this comparison, i don't care
-    if userVersion < 227 then
+    if userVersion < 228 then
         world.sendEntityMessage(data.player, "dpcServerMessage",
-            "^CornFlowerBlue;Dynamic Prox Chat^reset;: Your mod is out of date! Please go install version 2.2.7 to ensure functionality with the server. Use /ignoreversion to suppress this.")
+            "^CornFlowerBlue;Dynamic Prox Chat^reset;: Your mod is out of date! Please go install version 2.2.8 to ensure functionality with the server. Use /ignoreversion to suppress this.")
     end
     return
 end
