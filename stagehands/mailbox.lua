@@ -77,7 +77,8 @@ local function checkStatus(data)
     local playerSecret = data.secret or nil
 
     if not playerId or not uuid or not playerSecret then
-        return
+        world.sendEntityMessage(data.player, "dpcServerMessage", "Missing playerId, uuid, or authenticator.")
+        return false
     end
     playerSecrets = root.getConfiguration("DPC::playerSecrets") or {}
 
@@ -91,7 +92,8 @@ local function checkStatus(data)
     end
 
     if serverSavedSecret ~= playerSecret then
-        return
+        world.sendEntityMessage(data.player, "dpcServerMessage", "Bad authentication, command aborted.")
+        return false
     end
 
     -- this function is incomplete, need to fix it later
@@ -319,6 +321,10 @@ local function editLangPoints(data)
         newValue = math.max(0, newValue)
     end
 
+    if not playerTraits[targetUUID] then
+        playerTraits[targetUUID] = {}
+    end
+
     playerTraits[targetUUID].langPoints = {
         capacity = newValue,
         admin = data.uuid
@@ -384,7 +390,7 @@ local function addLang(data)
     if playerSecret == serverSavedSecret then
         local serverLangList = playerLangs[playerUUID] or {}
         local playerTraits = root.getConfiguration("DPC::playerTraits") or {}
-        local pointCap = playerTraits[playerUUID].langPoints.capacity or langLimit
+        local pointCap = (playerTraits[playerUUID] and playerTraits[playerUUID].langPoints.capacity) or langLimit
 
         local pointsLeft = serverLangList["[pointsLeft]"] or pointCap
         if pointsLeft < 1 then
@@ -1062,6 +1068,7 @@ local handleMessage = function(authorEntityId, authorUUID, authorPos, msgTime, m
         if useRad == -1 and maxRad ~= -1 then
             maxRad = -1
         end
+        -- radio mode doesn't take into account if you turn your radio off, but i don't really care about this edge case
         formatInsert(charBuffer, useRad, curMode, languageCode, radioMode, commCode, noScramble)
         charBuffer = ""
         prevMode = curMode
@@ -1422,9 +1429,14 @@ local handleMessage = function(authorEntityId, authorUUID, authorPos, msgTime, m
 end
 
 local function processVisuals(authorEntityId, authorPos, receiverEntityId, receiverUUID, recPos, maxRad,
-    messageDistance, formattedTable, recWorld, langAlphabets, slashCount, tickCount, asterCount, message)
+    messageDistance, formattedTable, recWorld, langAlphabets, slashCount, tickCount, asterCount, message, edit)
     local activeFreq = (playerCommChannels and playerCommChannels[receiverUUID]) or {}
-    local adminActive = activeAdmins[receiverUUID] or false
+    if not activeFreq.freq then
+        activeFreq = {
+            freq = "0"
+        }
+    end
+    local adminActive = activeAdmins[receiverUUID] == true or false
     local recLangs = (playerLangs and playerLangs[receiverUUID]) or {}
     local recTraits = (playerTraits and playerTraits[receiverUUID]) or {}
     local recHearing = (recTraits.hearing and recTraits.hearing.modifier) or 1
@@ -1434,7 +1446,7 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
     -- local loocRad = 2 * actionRad
     -- local noiseRad = 30
     local textTable = sb.jsonMerge({}, formattedTable)
-    local radioState = activeFreq["enabled"] or (activeFreq["enabled"] == nil and true)
+    local radioState = activeFreq["enabled"] or (activeFreq["enabled"] == nil)
     -- *re-hardcodes my radius values*
 
     local sharesWorld = message.sharesWorld
@@ -1821,6 +1833,53 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
             randSource:init(math.tointeger(byteLC))
             randSource:addEntropy(math.tointeger(wordBytes(word)))
             local retWord = soundLib[randSource:randInt(1, #soundLib)]
+
+            if allUpper then
+                retWord = retWord:upper()
+            elseif hasUpper then
+                retWord = retWord:sub(1, 1):upper() .. retWord:sub(2)
+            end
+
+            return retWord
+        end,
+        ["buzz"] = function(word, byteLC, langCode)
+            local soundLib = {"bzz", "zzt", "bzt", "ztz", "tzz", "zzz", "ksht", "hsh"}
+            randSource:init(math.tointeger(byteLC) + wordBytes(word))
+            local encWord = soundLib[randSource:randInt(1, #soundLib)]
+            randSource:init(math.tointeger(byteLC) + wordBytes(word))
+            local dotAmt = randSource:randInt(0, 2)
+            local trailingDots = ""
+
+            local hasUpper = false
+            local allUpper = true
+            local noLowVowels = false
+
+            for char in word:gmatch(".") do
+                if char ~= char:lower() then
+                    hasUpper = true
+                else
+                    allUpper = false
+                end
+
+                if char == "o" or char == "u" or char == "a" then
+                    noLowVowels = false
+                end
+            end
+
+            if (#word < 3 and allUpper) or (#word < 4 and noLowVowels) then
+                encWord = " . . ."
+                dotAmt = dotAmt - 1
+            end
+
+            while dotAmt > 0 do
+                trailingDots = trailingDots .. " . . ."
+                dotAmt = dotAmt - 1
+            end
+
+            local retWord = encWord .. trailingDots
+            -- if #word == 1 then
+            --     allUpper = false
+            -- end
 
             if allUpper then
                 retWord = retWord:upper()
@@ -2260,6 +2319,10 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
             end
         end
 
+        if activeFreq.freq then
+            activeFreq.freq = tostring(activeFreq.freq)
+        end
+
         for _, chunk in ipairs(textTable) do
             chunk["text"] = string.gsub(chunk["text"], "%^rollColor;", "^" .. rollColor .. ";")
             local useRad = tonumber(chunk["radius"])
@@ -2292,8 +2355,12 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
                 end
             end
 
+            if chunk.commCode then
+                chunk.commCode = tostring(chunk.commCode)
+            end
+
             if radioMode and radioState and
-                (activeFreq["freq"] and activeFreq["freq"] == chunk["commCode"] or chunk["commCode"] == 0) then
+                (activeFreq["freq"] and activeFreq["freq"] == chunk["commCode"] or chunk["commCode"] == "0") then
                 inSight = true
             else
                 radioMode = false
@@ -2383,8 +2450,8 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
             local rawStr = v["text"]
             -- FezzedOne: Strip out radio brackets. We'll re-add them later.
             v["text"] = rawStr:gsub("^{{", ""):gsub("^{", ""):gsub("}}$", ""):gsub("}$", "")
-            if v["isRadio"] and radioState and
-                (activeFreq["freq"] and activeFreq["freq"] == v["commCode"] or v["commCode"] == 0) then
+            -- ensure that comm codes and frequencies are strings due to how ints convert to boolean (yuck)
+            if v.isRadio and radioState and (activeFreq.freq == v.commCode or v.commCode == "0") then
                 v["valid"] = true
             else
                 v["isRadio"] = false
@@ -2686,6 +2753,7 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
     newMsg.text = message.text
     newMsg.portrait = message.portrait
     newMsg.playerUid = message.playerUid
+    newMsg.receiverUid = receiverUUID
     newMsg.connection = message.connection
     newMsg.nickname = message.nickname
     newMsg.skipRecog = message.skipRecog
@@ -2693,13 +2761,17 @@ local function processVisuals(authorEntityId, authorPos, receiverEntityId, recei
     newMsg.alias = message.alias
     newMsg.aliasPrio = message.aliasPrio
     newMsg.fakeName = message.fakeName
+    newMsg.processed = true
 
     newMsg.data = {}
+    newMsg.edit = edit
     newMsg.data.replyUUID = message.data and message.data.replyUUID
 
     if recWorld then
         newMsg.recId = receiverEntityId
         universe.sendWorldMessage(recWorld, "dpc_world_message", newMsg)
+    elseif edit then
+        world.sendEntityMessage(receiverEntityId, "scc_edit_message", newMsg)
     else
         world.sendEntityMessage(receiverEntityId, "scc_add_message", newMsg)
     end
@@ -2714,15 +2786,16 @@ end
 local function checkVersion(data)
     local userVersion = data.version
     -- hard code this comparison, i don't care
-    if userVersion < 221 then
+    if userVersion < 228 then
         world.sendEntityMessage(data.player, "dpcServerMessage",
-            "^CornFlowerBlue;Dynamic Prox Chat^reset;: Your mod is out of date! Please go install version 2.2.1 to ensure functionality with the server. Use /ignoreversion to suppress this.")
+            "^CornFlowerBlue;Dynamic Prox Chat^reset;: Your mod is out of date! Please go install version 2.2.8 to ensure functionality with the server. Use /ignoreversion to suppress this.")
     end
     return
 end
 
-local function processMessage(data)
+local function processMessage(data, edit)
     -- get a list of players, then process the message per player before sending it to each
+    local edit = edit or false
     local isGlobal = data.globalFlag
     local playerList = {}
     local playerWorlds = {}
@@ -2731,17 +2804,19 @@ local function processMessage(data)
     -- temporary addition to see if it stops crashes
     -- isGlobal = false --this didn't fix anything, apparently
 
+    -- OVERRIDING to ALWAYS set up sharedworld conditions, might make chat messages a little less performant
     if isGlobal == true or isGlobal == "true" then
         local clientList = universe.clientIds()
 
         for _, clientId in ipairs(clientList) do
             local playerEntity = clientId * -65536
             table.insert(playerList, playerEntity)
-            playerWorlds[playerEntity] = universe.clientWorld(clientId) or false
-            playerUniques[playerEntity] = universe.uuidForClient(clientId) or false
+            playerWorlds[playerEntity] = tostring(universe.clientWorld(clientId)) or false
+            playerUniques[playerEntity] = tostring(universe.uuidForClient(clientId)) or false
         end
     else
         playerList = world.players()
+        data.sharesWorld = true -- since receivers are in 1 world, sharesworld is always true
     end
 
     local authorPos = world.entityPosition(data.playerId)
@@ -2760,7 +2835,7 @@ local function processMessage(data)
 
     data.defaultFreq = data.defaultComms and data.defaultComms["freq"] or 0
 
-    -- run handlemessage once, then processVisuals for each player, should cut down on comp time
+    -- run handlemessage once, then pvisuals for each player, should cut down on comp time
     local handleTable = {}
     -- handleMessage(data.playerId, authorPos, msgTime, data)
     local handleStat, returnError = pcall(handleMessage, data.playerId, data.playerUid, authorPos, msgTime, data)
@@ -2783,6 +2858,7 @@ local function processMessage(data)
 
     -- process Visuals
     for _, recPlayer in ipairs(playerList) do
+        data.sharesWorld = false
         -- find distances here, process the msg for the player if it's estimated as valid
         local recPos, msgDistance, recUUID = nil, nil, nil
 
@@ -2791,19 +2867,29 @@ local function processMessage(data)
             recUUID = playerUniques[recPlayer]
             maxRange = -1
         end
+        data.sharesWorld = data.sharesWorld or (playerWorlds[recPlayer] == playerWorlds[data.playerId])
+        recPos = world.entityExists(recPlayer) and world.entityPosition(recPlayer)
 
-        data.sharesWorld = playerWorlds[recPlayer] == playerWorlds[data.playerId]
+        if not recPos then
+            data.sharesWorld = flase
+        end
+
         if data.sharesWorld then
-            recPos = world.entityPosition(world.entityExists(recPlayer) and recPlayer)
-            msgDistance = world.magnitude(recPos, authorPos)
+            if recPos and authorPos then
+                msgDistance = world.magnitude(recPos, authorPos) or 0
+            else
+                msgDistance = math.huge
+            end
             recUUID = world.entityUniqueId(recPlayer)
-            if maxSoundRad > 0 then -- only run this if there is a sound radius, checks to modify hearing for max radius
+            if maxSoundRad > 0 and not isGlobal then -- only run this if there is a sound radius, checks to modify hearing for max radius
                 local recTraits = (playerTraits and playerTraits[recUUID]) or {}
                 local recHearing = (recTraits.hearing and recTraits.hearing.modifier) or 1
                 maxRange = math.max(maxRange, maxSoundRad * recHearing) -- in this one we multiply since we're comparing radius and not distance
             end
         else
+            -- this happens if the two do not share a world
             maxRange = -1 -- set this just in case
+            msgDistance = math.huge
         end
 
         -- 200 for now with admin mode, might make it dynamic later
@@ -2813,7 +2899,7 @@ local function processMessage(data)
             end
             local status, errorMsg = pcall(processVisuals, data.playerId, authorPos, recPlayer, recUUID, recPos,
                 maxRange, msgDistance, formattedTable, playerWorlds[recPlayer], langAlphabets, slashCount, tickCount,
-                asterCount, data)
+                asterCount, data, edit)
             if status then
                 -- don't return because we want it to loop
                 -- return errorMsg
@@ -2843,19 +2929,13 @@ function dpc_init()
         --     "[DEBUG] Checks are on. Remove them before going to production.")
         -- log and process here
         local status, errorMsg = pcall(logNewMessage, purpose, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while logging message: %s\n  Message data: %s", errorMsg, data)
             world.sendEntityMessage(data.playerId, "dpcServerMessage",
                 "[DEBUG] DPC Chat failed with error: " .. errorMsg)
         end
         local status, errorMsg = pcall(processMessage, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while formatting proximity message: %s\n  Message data: %s",
                 errorMsg, data)
         end
@@ -2864,97 +2944,67 @@ function dpc_init()
     elseif purpose == "checkVersion" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(checkVersion, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while checking version: %s\n  Message data: %s", errorMsg, data)
         end
     elseif purpose == "editLangPhrase" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(editLangPhrase, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while adding replacement word: %s\n  Message data: %s",
                 errorMsg, data)
         end
     elseif purpose == "addLang" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(addLang, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while adding language: %s\n  Message data: %s", errorMsg, data)
         end
     elseif purpose == "resetLangs" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(resetLangs, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while resetting languages: %s\n  Message data: %s", errorMsg,
                 data)
         end
     elseif purpose == "defaultLang" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(defaultLang, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while setting default language: %s\n  Message data: %s",
                 errorMsg, data)
         end
     elseif purpose == "langlist" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(langList, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while checking language list: %s\n  Message data: %s",
                 errorMsg, data)
         end
     elseif purpose == "editlang" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(editLang, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while editing language: %s\n  Message data: %s", errorMsg, data)
         end
     elseif purpose == "setfreq" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(setFreq, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while adding comm channel: %s\n  Message data: %s", errorMsg,
                 data)
         end
     elseif purpose == "toggleradio" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(toggleRadio, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while adding comm channel: %s\n  Message data: %s", errorMsg,
                 data)
         end
     elseif purpose == "checkStatus" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(checkStatus, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while adding comm channel: %s\n  Message data: %s", errorMsg,
                 data)
         end
@@ -2962,20 +3012,14 @@ function dpc_init()
     elseif purpose == "adminMode" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(adminMode, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while running admin mode: %s\n  Message data: %s", errorMsg,
                 data)
         end
     elseif purpose == "editCharHearing" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(editCharHearing, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn(
                 "[DynamicProxChat] Error occurred while running editing character hearing: %s\n  Message data: %s",
                 errorMsg, data)
@@ -2983,12 +3027,15 @@ function dpc_init()
     elseif purpose == "editLangPoints" then
         logCommand(purpose, data)
         local status, errorMsg = pcall(editLangPoints, data)
-        if status then
-            -- sb.logWarn("Status on processMessage %s, errorMsg: %s",status,errorMsg)
-            -- return errorMsg
-        else
+        if not status then
             sb.logWarn("[DynamicProxChat] Error occurred while running editing language points: %s\n  Message data: %s",
                 errorMsg, data)
+        end
+    elseif purpose and purpose == "editMessage" then
+        -- does nothing for now
+    elseif purpose == "requestHandlers" then
+        if data and data.playerId then
+            world.sendEntityMessage(data.playerId, "scc_stagehand_allowed_messages", {"editMessage"})
         end
     else
         -- All the other stuff
